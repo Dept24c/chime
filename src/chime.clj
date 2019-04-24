@@ -1,21 +1,18 @@
 (ns chime
-  (:require [clj-time.core :as t]
-            [clj-time.coerce :as tc]
-            [clojure.core.async :as a :refer [<! >! go-loop]]
-            [clojure.core.async.impl.protocols :as p]))
+  (:require
+    [chime.time :as t]
+    [clojure.core.async :as a :refer [<!  >! go-loop]]
+    [clojure.core.async.impl.protocols :as p]))
 
-(defn- ms-between [start end]
-  (if (t/before? end start)
-    0
-    (-> (t/interval start end) (t/in-millis))))
+(set! *warn-on-reflection* true)
 
 (defn chime-ch
   "Returns a core.async channel that 'chimes' at every time in the
   times list. Times that have already passed are ignored.
 
   Arguments:
-    times - (required) Sequence of java.util.Dates, org.joda.time.DateTimes
-                       or msecs since epoch
+    times - (required) Sequence of Instants. Can be lazy, see
+                       chime.time/periodic-seq
 
     ch    - (optional) Channel to chime on - defaults to a new unbuffered channel
                        Closing this channel stops the schedule.
@@ -37,16 +34,14 @@
         times-fn (^:once fn* [] times)]
     (go-loop [now (t/now)
               times-seq (->> (times-fn)
-                             (map tc/to-date-time)
-                             (drop-while #(t/before? % now)))]
+                             (drop-while #(t/isBefore? % now)))]
       (if-let [[next-time & more-times] (seq times-seq)]
         (a/alt!
           cancel-ch (a/close! ch)
 
-          (a/timeout (ms-between now next-time)) (do
-                                                   (>! ch next-time)
-
-                                                   (recur (t/now) more-times))
+          (a/timeout (t/ms-between now next-time)) (do
+                                                     (>! ch next-time)
+                                                     (recur (t/now) more-times))
 
           :priority true)
 
@@ -85,7 +80,7 @@
       (reset! !cancelled? true))))
 
 ;; ---------- TESTS ----------
-
+;
 (comment
   ;; some quick tests ;)
 
@@ -125,8 +120,7 @@
   ;; test case for 0.1.5 bugfix - thanks Nick!
   (require '[clj-time.periodic :refer [periodic-seq]])
 
-  (let [ch (chime-ch (->> (periodic-seq (-> (-> (t/now) (t/plus (t/seconds 1)))
-                                            (.withMillisOfSecond 0))
+  (let [ch (chime-ch (->> (t/periodic-seq (-> (-> (t/from-now (t/seconds 1))))
                                         (-> 1 t/seconds))
                         (take 3)))]
 
@@ -148,7 +142,7 @@
   (require '[clj-time.periodic :refer [periodic-seq]])
 
   (def cancel-stuff!
-    (chime-at (rest (periodic-seq (t/now) (t/seconds 2))) do-stuff))
+    (chime-at (rest (t/periodic-seq (t/now) (t/seconds 2))) do-stuff))
 
   (cancel-stuff!)
 
